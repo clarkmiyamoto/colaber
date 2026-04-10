@@ -14,7 +14,7 @@ Colab VS Code extension. You need to provide these as environment variables.
    ```
 
 2. Obtain the client ID and secret from the
-   [Colab VS Code extension source](https://github.com/googlecolab/colabtools).
+   [Colab VS Code extension source]([https://github.com/googlecolab/colabtools](https://github.com/googlecolab/colab-vscode)).
    They are the same public OAuth2 credentials embedded in Google's official
    extension — search the extension source for `client_id` and `client_secret`.
 
