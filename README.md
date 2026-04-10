@@ -1,7 +1,20 @@
 # colaber
-CLI to run your local scripts on Google Colab
+Instead of running python scripts on your local, have it run on Google Colab.
+
+Running python goes from
+```bash
+python main.py --args
+```
+To this
+```bash
+colaber main.py --args
+```
 
 ## Setup
+
+### Installation
+1. Git clone this
+2. Run `pip install . -e`
 
 ### OAuth2 Credentials
 
