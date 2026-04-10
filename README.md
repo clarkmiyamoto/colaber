@@ -1,5 +1,5 @@
 # colaber
-Instead of running python scripts on your local, have it run on Google Colab.
+Instead of running python scripts on your local, have it run on Google Colab. GPU support included.
 
 Running python goes from
 ```bash
