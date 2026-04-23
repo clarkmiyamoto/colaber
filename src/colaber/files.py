@@ -29,15 +29,21 @@ def _format_size(n: float) -> str:
 
 
 
-def _load_gitignore(project_dir: Path) -> pathspec.PathSpec | None:
-    """Load .gitignore patterns from the project directory."""
-    gitignore_path = project_dir / ".gitignore"
-    if not gitignore_path.exists():
+def _load_ignore_spec(project_dir: Path) -> pathspec.PathSpec | None:
+    """Load ignore patterns from .gitignore and .colaber."""
+    patterns: list[str] = []
+    for filename in (".gitignore", ".colaber"):
+        ignore_path = project_dir / filename
+        if ignore_path.exists():
+            patterns.extend(ignore_path.read_text().splitlines())
+
+    if not patterns:
         return None
-    return pathspec.PathSpec.from_lines("gitwildmatch", gitignore_path.read_text().splitlines())
+
+    return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
 
 
-def _should_include(path: Path, project_dir: Path, gitignore: pathspec.PathSpec | None) -> bool:
+def _should_include(path: Path, project_dir: Path, ignore_spec: pathspec.PathSpec | None) -> bool:
     """Check if a file should be included in the upload archive."""
     rel = path.relative_to(project_dir)
 
@@ -46,8 +52,8 @@ def _should_include(path: Path, project_dir: Path, gitignore: pathspec.PathSpec 
         if part in UPLOAD_EXCLUDE_DIRS:
             return False
 
-    # Skip gitignore matches
-    if gitignore and gitignore.match_file(str(rel)):
+    # Skip ignore-file matches
+    if ignore_spec and ignore_spec.match_file(str(rel)):
         return False
 
     return True
@@ -56,11 +62,11 @@ def _should_include(path: Path, project_dir: Path, gitignore: pathspec.PathSpec 
 def create_project_archive(project_dir: Path) -> bytes:
     """Create a tar.gz archive of the project directory.
 
-    Respects .gitignore and excludes common non-essential directories.
+    Respects .gitignore/.colaber and excludes common non-essential directories.
     Returns the archive as bytes.
     """
     project_dir = project_dir.resolve()
-    gitignore = _load_gitignore(project_dir)
+    ignore_spec = _load_ignore_spec(project_dir)
 
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
@@ -71,12 +77,12 @@ def create_project_archive(project_dir: Path) -> bytes:
             dirs[:] = [
                 d for d in dirs
                 if d not in UPLOAD_EXCLUDE_DIRS
-                and _should_include(root_path / d, project_dir, gitignore)
+                and _should_include(root_path / d, project_dir, ignore_spec)
             ]
 
             for fname in files:
                 fpath = root_path / fname
-                if not _should_include(fpath, project_dir, gitignore):
+                if not _should_include(fpath, project_dir, ignore_spec):
                     continue
                 arcname = str(fpath.relative_to(project_dir))
                 tar.add(str(fpath), arcname=arcname)
@@ -91,6 +97,36 @@ def _contents_api_headers(runtime: ColabRuntime) -> dict[str, str]:
         "X-Colab-Runtime-Proxy-Token": runtime.info.proxy_token,
         "X-Colab-Client-Agent": CLIENT_AGENT_HEADER,
     }
+
+
+def _upload_via_contents_api(runtime: ColabRuntime, archive: bytes) -> None:
+    """Upload archive via Jupyter Contents API PUT (bypasses kernel)."""
+    archive_b64 = base64.b64encode(archive).decode("ascii")
+    url = f"{runtime.info.proxy_url}/api/contents/_colaber_upload.tar.gz"
+    headers = _contents_api_headers(runtime)
+    headers["Content-Type"] = "application/json"
+    body = {
+        "type": "file",
+        "format": "base64",
+        "content": archive_b64,
+    }
+    resp = requests.put(url, headers=headers, json=body)
+    resp.raise_for_status()
+
+
+def _extract_via_kernel(executor: ColabExecutor) -> None:
+    """Extract a previously uploaded tar.gz archive on the remote runtime."""
+    code = (
+        f"import tarfile, os\n"
+        f'os.makedirs("{REMOTE_PROJECT_DIR}", exist_ok=True)\n'
+        f'with tarfile.open("/content/_colaber_upload.tar.gz", "r:gz") as tf:\n'
+        f'    tf.extractall("{REMOTE_PROJECT_DIR}")\n'
+        f'os.remove("/content/_colaber_upload.tar.gz")\n'
+        f'os.chdir("{REMOTE_PROJECT_DIR}")\n'
+    )
+    result = executor.execute(code, on_stdout=lambda _: None, on_stderr=lambda _: None, on_stdin=None)
+    if result.status != "ok":
+        raise RuntimeError(f"Failed to extract project archive: {result.error_value}")
 
 
 def _render_progress(sent: int, total: int, start: float) -> None:
@@ -171,11 +207,15 @@ def _upload_via_kernel(
 def upload_project(runtime: ColabRuntime, executor: ColabExecutor, project_dir: Path) -> None:
     """Upload the project directory to the Colab runtime.
 
-    Creates a tar.gz archive, sends it via pipelined kernel execute_request
-    messages over a single WebSocket connection, then extracts it.
+    Uploads via Jupyter Contents API (fast HTTP PUT), falling back to
+    pipelined kernel execute_request messages if the API is unavailable.
     """
     archive = create_project_archive(project_dir)
-    _upload_via_kernel(executor, archive)
+    try:
+        _upload_via_contents_api(runtime, archive)
+        _extract_via_kernel(executor)
+    except Exception:
+        _upload_via_kernel(executor, archive)
 
 
 def snapshot_remote_files(executor: ColabExecutor) -> set[str]:
