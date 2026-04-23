@@ -1,7 +1,20 @@
 # colaber
-CLI to run your local scripts on Google Colab
+Instead of running python scripts on your local, have it run on Google Colab. GPU support included.
+
+Running python goes from
+```bash
+python main.py --args
+```
+To this
+```bash
+colaber main.py --args
+```
 
 ## Setup
+
+### Installation
+1. Git clone this
+2. Run `pip install . -e`
 
 ### OAuth2 Credentials
 
@@ -14,7 +27,7 @@ Colab VS Code extension. You need to provide these as environment variables.
    ```
 
 2. Obtain the client ID and secret from the
-   [Colab VS Code extension source](https://github.com/googlecolab/colabtools).
+   [Colab VS Code extension source](https://github.com/googlecolab/colab-vscode).
    They are the same public OAuth2 credentials embedded in Google's official
    extension — search the extension source for `client_id` and `client_secret`.
 
